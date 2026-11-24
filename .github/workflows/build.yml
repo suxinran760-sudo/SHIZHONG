@@ -1,0 +1,61 @@
+name: Build CATIME EXE
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract zip and locate project
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path . -Filter *.zip -File | Select-Object -First 1
+          if (-not $zip) { Write-Host "No zip found in repo root"; exit 1 }
+          Write-Host "Using zip: $($zip.Name)"
+          Expand-Archive -Path $zip.FullName -DestinationPath extracted -Force
+          $main = Get-ChildItem -Path extracted -Recurse -Filter main.py | Select-Object -First 1
+          if (-not $main) { Write-Host "main.py not found"; Get-ChildItem -Recurse extracted | Select-Object FullName; exit 1 }
+          $dir = $main.DirectoryName -replace '\\','/'
+          Write-Host "Project dir: $dir"
+          "PROJECT_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Build EXE with PyInstaller
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name CATIME main.py
+
+      - name: Check EXE exists
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if (-not (Test-Path dist/CATIME.exe)) {
+            Write-Host "dist contents:"
+            Get-ChildItem -Recurse dist | Select-Object FullName
+            exit 1
+          }
+          Get-Item dist/CATIME.exe | Select-Object Name, Length
+
+      - name: Upload CATIME EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: CATIME-windows
+          path: ${{ env.PROJECT_DIR }}/dist/CATIME.exe
+          if-no-files-found: error
